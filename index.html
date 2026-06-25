@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Network Health Monitor</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #141925;
+    --panel-2: #1b2230;
+    --border: #283042;
+    --text: #e6edf3;
+    --muted: #8b97a8;
+    --up: #3fd17a;
+    --slow: #f5c542;
+    --down: #ff5d5d;
+    --accent: #4dabf7;
+    --shadow: 0 2px 8px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    padding: 24px;
+    max-width: 1280px;
+    margin: 0 auto;
+    min-height: 100vh;
+  }
+
+  header { margin-bottom: 20px; }
+  header h1 { font-size: 1.6rem; font-weight: 600; letter-spacing: -.02em; }
+  header .sub { color: var(--muted); font-size: .9rem; margin-top: 2px; }
+
+  /* ---- Summary bar ---- */
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  .sum-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+    box-shadow: var(--shadow);
+    position: relative;
+    overflow: hidden;
+  }
+  .sum-box::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    background: var(--accent);
+  }
+  .sum-box.up::before { background: var(--up); }
+  .sum-box.slow::before { background: var(--slow); }
+  .sum-box.down::before { background: var(--down); }
+  .sum-box .label {
+    font-size: .72rem;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--muted);
+  }
+  .sum-box .value { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .sum-box.up .value { color: var(--up); }
+  .sum-box.slow .value { color: var(--slow); }
+  .sum-box.down .value { color: var(--down); }
+  .sum-box .unit { font-size: 1rem; font-weight: 500; color: var(--muted); }
+
+  /* ---- Service cards ---- */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 14px;
+    margin-bottom: 28px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--muted);
+    border-radius: 12px;
+    padding: 14px 16px;
+    box-shadow: var(--shadow);
+    transition: border-left-color .3s;
+  }
+  .card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .dot {
+    width: 11px; height: 11px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+    transition: background .3s, box-shadow .3s;
+  }
+  .dot.up   { background: var(--up);   box-shadow: 0 0 8px 1px rgba(63,209,122,.7); }
+  .dot.slow { background: var(--slow); box-shadow: 0 0 8px 1px rgba(245,197,66,.7); }
+  .dot.down { background: var(--down); box-shadow: 0 0 8px 1px rgba(255,93,93,.7); }
+  .card .name { font-size: .92rem; font-weight: 600; }
+  .card .latency {
+    font-size: 1.9rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .card .latency .ms { font-size: .95rem; font-weight: 500; color: var(--muted); }
+  .card .latency.down { color: var(--down); }
+  .card .status-label {
+    font-size: .74rem;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .card .status-label.up   { color: var(--up); }
+  .card .status-label.slow { color: var(--slow); }
+  .card .status-label.down { color: var(--down); }
+  .card .spark { width: 100%; height: 38px; display: block; }
+
+  /* ---- Main chart ---- */
+  .chart-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    box-shadow: var(--shadow);
+    margin-bottom: 24px;
+  }
+  .chart-panel h2 {
+    font-size: .82rem;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+  #mainChart { width: 100%; height: 300px; display: block; }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .legend .item { display: flex; align-items: center; gap: 6px; font-size: .8rem; color: var(--muted); }
+  .legend .swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+
+  /* ---- Footer ---- */
+  footer {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: var(--muted);
+    font-size: .82rem;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  footer .next { font-variant-numeric: tabular-nums; }
+
+  .banner {
+    background: rgba(255,93,93,.12);
+    border: 1px solid rgba(255,93,93,.4);
+    color: #ffb3b3;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: .85rem;
+    margin-bottom: 18px;
+    display: none;
+  }
+
+  @media (max-width: 700px) {
+    body { padding: 16px; }
+    .summary { grid-template-columns: repeat(2, 1fr); }
+    header h1 { font-size: 1.35rem; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>🛰️ Network Health Monitor</h1>
+    <div class="sub">Pinging 10 services every 30s · latency measured server-side via the <code>/api/check</code> proxy</div>
+  </header>
+
+  <div class="banner" id="banner"></div>
+
+  <div class="summary">
+    <div class="sum-box up">
+      <div class="label">Up &lt;500ms</div>
+      <div class="value" id="sum-up">—</div>
+    </div>
+    <div class="sum-box slow">
+      <div class="label">Slow 500–1500ms</div>
+      <div class="value" id="sum-slow">—</div>
+    </div>
+    <div class="sum-box down">
+      <div class="label">Down &gt;1500ms / fail</div>
+      <div class="value" id="sum-down">—</div>
+    </div>
+    <div class="sum-box">
+      <div class="label">Average Latency</div>
+      <div class="value" id="sum-avg">—<span class="unit"> ms</span></div>
+    </div>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="chart-panel">
+    <h2>Latency history — last 20 pings</h2>
+    <canvas id="mainChart"></canvas>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <footer>
+    <div class="next">Next ping in <span id="countdown">—</span>s</div>
+    <div>Last updated: <span id="last-updated">—</span></div>
+  </footer>
+
+<script>
+"use strict";
+
+/* ===================== Config ===================== */
+const SERVICES = [
+  { name: "Google",         url: "https://www.google.com",        color: "#4dabf7" },
+  { name: "GitHub",         url: "https://github.com",            color: "#51cf66" },
+  { name: "Cloudflare",     url: "https://www.cloudflare.com",    color: "#ffd43b" },
+  { name: "Wikipedia",      url: "https://en.wikipedia.org",      color: "#ff922b" },
+  { name: "Reddit",         url: "https://www.reddit.com",        color: "#cc5de8" },
+  { name: "Stack Overflow", url: "https://stackoverflow.com",     color: "#20c997" },
+  { name: "npm Registry",   url: "https://registry.npmjs.org",    color: "#ff8787" },
+  { name: "Hacker News",    url: "https://news.ycombinator.com",  color: "#94d82d" },
+  { name: "DuckDuckGo",     url: "https://duckduckgo.com",        color: "#22b8cf" },
+  { name: "Mozilla",        url: "https://www.mozilla.org",       color: "#f783ac" }
+];
+
+const PROXY = "/api/check";   // served by the same Vercel project
+const MAX_POINTS = 20;
+const INTERVAL_MS = 30000;
+
+// One ring-buffer of the last MAX_POINTS measurements per service.
+// A value of -1 means the check failed (unreachable / 5xx / timeout).
+const history = SERVICES.map(() => []);
+let nextPingAt = 0;
+let lastUpdated = null;
+
+/* ===================== Status helpers ===================== */
+function statusOf(latency) {
+  if (latency < 0 || latency > 1500) return "down";
+  if (latency >= 500) return "slow";
+  return "fast";
+}
+const STATUS_LABEL = { fast: "Fast", slow: "Slow", down: "Down" };
+const STATUS_VAR   = { fast: "--up", slow: "--slow", down: "--down" };
+const STATUS_CLASS = { fast: "up", slow: "slow", down: "down" };
+
+function cssColor(varName) {
+  return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+}
+
+/* ===================== Pinging (via proxy) ===================== */
+async function ping(service) {
+  try {
+    const res = await fetch(PROXY + "?url=" + encodeURIComponent(service.url), { cache: "no-store" });
+    if (!res.ok) return -1;            // proxy itself errored
+    const data = await res.json();
+    if (!data.ok) return -1;           // service unreachable / 5xx / timeout
+    return typeof data.ms === "number" ? data.ms : -1;
+  } catch (e) {
+    return -1;                         // network error reaching the proxy
+  }
+}
+
+async function pingAll() {
+  const results = await Promise.all(SERVICES.map(async (s, i) => {
+    const latency = await ping(s);
+    const h = history[i];
+    h.push(latency);
+    if (h.length > MAX_POINTS) h.shift();
+    return latency;
+  }));
+  // If every single check failed on the first run, the proxy is probably
+  // unreachable (e.g. opened as a local file). Surface a hint.
+  const allFailed = results.every(v => v < 0);
+  const banner = document.getElementById("banner");
+  if (allFailed && location.protocol === "file:") {
+    banner.style.display = "block";
+    banner.textContent = "All checks failed — this page must be served by the Vercel project so the /api/check proxy is reachable (opening the raw file won't work).";
+  } else {
+    banner.style.display = "none";
+  }
+  lastUpdated = new Date();
+  render();
+}
+
+/* ===================== Card creation ===================== */
+const cardEls = [];
+function buildCards() {
+  const root = document.getElementById("cards");
+  SERVICES.forEach((s) => {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div class="card-head">
+        <span class="dot"></span>
+        <span class="name">${s.name}</span>
+      </div>
+      <div class="latency"><span class="num">—</span><span class="ms"> ms</span></div>
+      <div class="status-label">Waiting…</div>
+      <canvas class="spark"></canvas>`;
+    root.appendChild(card);
+    cardEls.push({
+      card,
+      dot: card.querySelector(".dot"),
+      latency: card.querySelector(".latency"),
+      num: card.querySelector(".num"),
+      label: card.querySelector(".status-label"),
+      spark: card.querySelector(".spark")
+    });
+  });
+}
+
+/* ===================== Rendering ===================== */
+function render() {
+  let up = 0, slow = 0, down = 0, sum = 0, n = 0;
+
+  SERVICES.forEach((s, i) => {
+    const h = history[i];
+    const refs = cardEls[i];
+    if (!h.length) return;
+
+    const latency = h[h.length - 1];
+    const status = statusOf(latency);
+    const cls = STATUS_CLASS[status];
+    const color = cssColor(STATUS_VAR[status]);
+
+    if (status === "fast") up++;
+    else if (status === "slow") slow++;
+    else down++;
+    if (latency >= 0) { sum += latency; n++; }
+
+    refs.card.style.borderLeftColor = color;
+    refs.dot.className = "dot " + cls;
+    refs.label.className = "status-label " + cls;
+    refs.label.textContent = STATUS_LABEL[status];
+    refs.latency.classList.toggle("down", latency < 0);
+    refs.num.textContent = latency < 0 ? "ERR" : Math.round(latency);
+    refs.latency.querySelector(".ms").style.display = latency < 0 ? "none" : "";
+
+    drawSparkline(refs.spark, h, s.color);
+  });
+
+  document.getElementById("sum-up").textContent = up;
+  document.getElementById("sum-slow").textContent = slow;
+  document.getElementById("sum-down").textContent = down;
+  document.getElementById("sum-avg").innerHTML =
+    (n ? Math.round(sum / n) : "—") + '<span class="unit"> ms</span>';
+
+  drawMainChart();
+
+  document.getElementById("last-updated").textContent =
+    lastUpdated ? lastUpdated.toLocaleTimeString() : "—";
+}
+
+/* ===================== Canvas helpers ===================== */
+function prepCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = Math.max(1, Math.round(w * dpr));
+  canvas.height = Math.max(1, Math.round(h * dpr));
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+
+function drawSparkline(canvas, data, color) {
+  const { ctx, w, h } = prepCanvas(canvas);
+  if (!data.length) return;
+
+  const valid = data.filter(v => v >= 0);
+  const max = Math.max(1, ...valid);
+  const pad = 3;
+  const plotH = h - pad * 2;
+  const xStep = data.length > 1 ? w / (data.length - 1) : 0;
+  const yOf = v => pad + plotH - (v / max) * plotH;
+
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  let pen = false;
+  data.forEach((v, i) => {
+    if (v < 0) { pen = false; return; }
+    const x = i * xStep, y = yOf(v);
+    if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  const last = data[data.length - 1];
+  if (last >= 0) {
+    ctx.fillStyle = cssColor(STATUS_VAR[statusOf(last)]);
+    ctx.beginPath();
+    ctx.arc((data.length - 1) * xStep, yOf(last), 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function niceMax(v) {
+  if (v <= 0) return 100;
+  const pow = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / pow;
+  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return step * pow;
+}
+
+function drawMainChart() {
+  const canvas = document.getElementById("mainChart");
+  const { ctx, w, h } = prepCanvas(canvas);
+
+  const padL = 52, padR = 12, padT = 10, padB = 22;
+  const plotW = w - padL - padR;
+  const plotH = h - padT - padB;
+
+  let gmax = 0;
+  history.forEach(hd => hd.forEach(v => { if (v > gmax) gmax = v; }));
+  const yMax = niceMax(gmax || 100);
+
+  const xOf = i => padL + (MAX_POINTS > 1 ? (i / (MAX_POINTS - 1)) * plotW : 0);
+  const yOf = v => padT + plotH - (v / yMax) * plotH;
+
+  const steps = 5;
+  ctx.font = "11px -apple-system, Segoe UI, sans-serif";
+  ctx.textBaseline = "middle";
+  for (let s = 0; s <= steps; s++) {
+    const val = (yMax / steps) * s;
+    const y = yOf(val);
+    ctx.strokeStyle = "rgba(255,255,255,0.07)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(w - padR, y);
+    ctx.stroke();
+    ctx.fillStyle = "#8b97a8";
+    ctx.textAlign = "right";
+    ctx.fillText(Math.round(val), padL - 8, y);
+  }
+  ctx.save();
+  ctx.translate(12, padT + plotH / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#8b97a8";
+  ctx.fillText("milliseconds", 0, 0);
+  ctx.restore();
+
+  SERVICES.forEach((s, idx) => {
+    const data = history[idx];
+    if (!data.length) return;
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 1.8;
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    let pen = false;
+    data.forEach((v, i) => {
+      if (v < 0) { pen = false; return; }
+      const x = xOf(i), y = yOf(v);
+      if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+}
+
+/* ===================== Legend ===================== */
+function buildLegend() {
+  const root = document.getElementById("legend");
+  root.innerHTML = SERVICES.map(s =>
+    `<div class="item"><span class="swatch" style="background:${s.color}"></span>${s.name}</div>`
+  ).join("");
+}
+
+/* ===================== Footer countdown ===================== */
+function tickFooter() {
+  const remaining = Math.max(0, Math.ceil((nextPingAt - Date.now()) / 1000));
+  document.getElementById("countdown").textContent = remaining;
+}
+
+/* ===================== Orchestration ===================== */
+function cycle() {
+  nextPingAt = Date.now() + INTERVAL_MS;
+  pingAll();
+}
+
+buildCards();
+buildLegend();
+cycle();
+setInterval(cycle, INTERVAL_MS);
+setInterval(tickFooter, 250);
+window.addEventListener("resize", render);
+</script>
+</body>
+</html>

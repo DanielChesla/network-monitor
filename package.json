@@ -1,0 +1,8 @@
+{
+  "name": "network-health-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Single-page network health monitor with a serverless health-check proxy.",
+  "license": "MIT"
+}
