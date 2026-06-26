@@ -102,6 +102,7 @@
   .dot.slow { background: var(--slow); box-shadow: 0 0 8px 1px rgba(245,197,66,.7); }
   .dot.down { background: var(--down); box-shadow: 0 0 8px 1px rgba(255,93,93,.7); }
   .card .name { font-size: .92rem; font-weight: 600; }
+  .card .cert { font-size: .72rem; color: var(--muted); margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
   .card .latency {
     font-size: 1.9rem;
     font-weight: 700;
@@ -240,6 +241,7 @@ const INTERVAL_MS = 30000;
 // One ring-buffer of the last MAX_POINTS measurements per service.
 // A value of -1 means the check failed (unreachable / 5xx / timeout).
 const history = SERVICES.map(() => []);
+const certs = SERVICES.map(() => null); // latest TLS cert info per service
 let nextPingAt = 0;
 let lastUpdated = null;
 
@@ -261,21 +263,23 @@ function cssColor(varName) {
 async function ping(service) {
   try {
     const res = await fetch(PROXY + "?url=" + encodeURIComponent(service.url), { cache: "no-store" });
-    if (!res.ok) return -1;            // proxy itself errored
+    if (!res.ok) return { latency: -1, cert: null };          // proxy itself errored
     const data = await res.json();
-    if (!data.ok) return -1;           // service unreachable / 5xx / timeout
-    return typeof data.ms === "number" ? data.ms : -1;
+    const cert = data.cert || null;                           // TLS cert info (may exist even when down)
+    if (!data.ok) return { latency: -1, cert };               // service unreachable / 5xx / timeout
+    return { latency: typeof data.ms === "number" ? data.ms : -1, cert };
   } catch (e) {
-    return -1;                         // network error reaching the proxy
+    return { latency: -1, cert: null };                       // network error reaching the proxy
   }
 }
 
 async function pingAll() {
   const results = await Promise.all(SERVICES.map(async (s, i) => {
-    const latency = await ping(s);
+    const { latency, cert } = await ping(s);
     const h = history[i];
     h.push(latency);
     if (h.length > MAX_POINTS) h.shift();
+    if (cert) certs[i] = cert;   // keep last known cert (don't clobber with null on a blip)
     return latency;
   }));
   // If every single check failed on the first run, the proxy is probably
@@ -304,6 +308,7 @@ function buildCards() {
         <span class="dot"></span>
         <span class="name">${s.name}</span>
       </div>
+      <div class="cert">🔒 cert: —</div>
       <div class="latency"><span class="num">—</span><span class="ms"> ms</span></div>
       <div class="status-label">Waiting…</div>
       <canvas class="spark"></canvas>`;
@@ -311,6 +316,7 @@ function buildCards() {
     cardEls.push({
       card,
       dot: card.querySelector(".dot"),
+      cert: card.querySelector(".cert"),
       latency: card.querySelector(".latency"),
       num: card.querySelector(".num"),
       label: card.querySelector(".status-label"),
@@ -320,6 +326,23 @@ function buildCards() {
 }
 
 /* ===================== Rendering ===================== */
+function renderCert(el, cert) {
+  if (!cert || cert.daysLeft == null) {
+    el.textContent = "🔒 cert: unknown";
+    el.style.color = "var(--muted)";
+    return;
+  }
+  const date = new Date(cert.validTo).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  const days = cert.daysLeft;
+  if (days < 0) {
+    el.textContent = "🔒 cert EXPIRED (" + date + ")";
+    el.style.color = "var(--down)";
+    return;
+  }
+  el.textContent = `🔒 cert: ${date} · ${days}d left`;
+  el.style.color = days < 14 ? "var(--down)" : days < 30 ? "var(--slow)" : "var(--muted)";
+}
+
 function render() {
   let up = 0, slow = 0, down = 0, sum = 0, n = 0;
 
@@ -346,6 +369,7 @@ function render() {
     refs.num.textContent = latency < 0 ? "ERR" : Math.round(latency);
     refs.latency.querySelector(".ms").style.display = latency < 0 ? "none" : "";
 
+    renderCert(refs.cert, certs[i]);
     drawSparkline(refs.spark, h, s.color);
   });
 

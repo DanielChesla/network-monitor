@@ -1,7 +1,8 @@
 // Serverless health-check proxy for the Network Health Monitor.
 // Does a real server-side request to a monitored service and reports the
-// HTTP status plus server-measured latency. Restricted to an allowlist of
-// the monitored hosts so it can't be abused as an open proxy (SSRF guard).
+// HTTP status, server-measured latency, and TLS certificate expiry.
+// Restricted to an allowlist of the monitored hosts (SSRF guard).
+import tls from "tls";
 
 const ALLOWED = new Set([
   "www.titletap.com",
@@ -13,9 +14,31 @@ const ALLOWED = new Set([
 
 const TIMEOUT_MS = 8000;
 
+// Open a TLS connection and read the peer certificate's expiry. Returns
+// { validTo: ISO, daysLeft } or null if it can't be retrieved.
+function getCert(hostname) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    try {
+      const socket = tls.connect(
+        { host: hostname, port: 443, servername: hostname, timeout: 6000 },
+        () => {
+          const c = socket.getPeerCertificate();
+          socket.end();
+          if (!c || !c.valid_to) return finish(null);
+          const validTo = new Date(c.valid_to);
+          if (isNaN(validTo.getTime())) return finish(null);
+          finish({ validTo: validTo.toISOString(), daysLeft: Math.round((validTo.getTime() - Date.now()) / 86400000) });
+        }
+      );
+      socket.on("error", () => finish(null));
+      socket.on("timeout", () => { socket.destroy(); finish(null); });
+    } catch { finish(null); }
+  });
+}
+
 export default async function handler(req, res) {
-  // Permissive CORS so the dashboard also works if opened from another origin
-  // (when served by this same project it's same-origin and CORS is moot).
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Cache-Control", "no-store");
@@ -37,6 +60,9 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: "host not allowed" });
   }
 
+  // Cert check runs in parallel with the HTTP check so it doesn't inflate latency.
+  const certPromise = target.protocol === "https:" ? getCert(target.hostname) : Promise.resolve(null);
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const t0 = Date.now();
@@ -52,17 +78,19 @@ export default async function handler(req, res) {
     const ms = Date.now() - t0;
     try { await r.body?.cancel(); } catch {}
     clearTimeout(timer);
-
+    const cert = await certPromise;
     // "ok" = we got a real HTTP response and the server isn't erroring.
-    // A 4xx (e.g. 403/405) still means the host is up and reachable.
-    return res.status(200).json({ ok: r.status > 0 && r.status < 500, status: r.status, ms });
+    return res.status(200).json({ ok: r.status > 0 && r.status < 500, status: r.status, ms, cert });
   } catch (e) {
     clearTimeout(timer);
+    const ms = Date.now() - t0;
+    const cert = await certPromise; // cert may still resolve even if HTTP failed
     return res.status(200).json({
       ok: false,
       status: 0,
-      ms: Date.now() - t0,
-      error: e.name === "AbortError" ? "timeout" : String(e.message || e)
+      ms,
+      error: e.name === "AbortError" ? "timeout" : String(e.message || e),
+      cert
     });
   }
 }
