@@ -4,16 +4,11 @@
 // the monitored hosts so it can't be abused as an open proxy (SSRF guard).
 
 const ALLOWED = new Set([
-  "www.google.com",
-  "github.com",
-  "www.cloudflare.com",
-  "en.wikipedia.org",
-  "www.reddit.com",
-  "stackoverflow.com",
-  "registry.npmjs.org",
-  "news.ycombinator.com",
-  "duckduckgo.com",
-  "www.mozilla.org"
+  "www.titletap.com",
+  "app.titletap.com",
+  "api.titletap.com",
+  "app.clearviewsocial.com",
+  "beta.clearviewsocial.com"
 ]);
 
 const TIMEOUT_MS = 8000;
